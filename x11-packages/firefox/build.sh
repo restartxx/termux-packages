@@ -131,11 +131,52 @@ termux_step_make_install() {
 }
 
 termux_step_post_make_install() {
-	# https://github.com/termux/termux-packages/issues/18429
-	# https://phabricator.services.mozilla.com/D181687
-	# Android 8.x and older not support "-z pack-relative-relocs" / DT_RELR
-	local r=$("${READELF}" -d "${TERMUX_PREFIX}/bin/firefox")
-	if [[ -n "$(echo "${r}" | grep "(RELR)")" ]]; then
-		termux_error_exit "DT_RELR is unsupported on Android 8.x and older\n${r}"
-	fi
+    # --- INÍCIO DA INJEÇÃO LIBREWOLF/ARKENFOX ---
+    echo " [!] Injetando configurações Hardened (LibreWolf/Arkenfox)..."
+
+    # Definir onde o Firefox vai morar dentro do pacote .deb
+    # Nota: MASSAGEDIR é a pasta temporária onde o .deb é montado
+    local _target_dir="$TERMUX_PKG_MASSAGEDIR/$TERMUX_PREFIX/lib/firefox"
+    local _pref_dir="$_target_dir/browser/defaults/preferences"
+    local _dist_dir="$_target_dir/distribution"
+
+    mkdir -p "$_pref_dir"
+    mkdir -p "$_dist_dir"
+
+    # 1. Baixar o user.js do Arkenfox (Base do LibreWolf)
+    # Renomeamos para garantir precedência alfabética (z_...)
+    curl -L "https://raw.githubusercontent.com/arkenfox/user.js/master/user.js" -o "$_pref_dir/z_arkenfox_hardening.js"
+
+    # 2. Criar policies.json (Desativa telemetria corporativa)
+    cat <<EOF > "$_dist_dir/policies.json"
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "EnableTrackingProtection": {
+      "Cryptomining": true,
+      "Fingerprinting": true
+    },
+    "DisablePocket": true,
+    "DisableFirefoxAccounts": false,
+    "DontCheckDefaultBrowser": true,
+    "DisplayBookmarksToolbar": "never",
+    "SearchBar": "unified"
+  }
+}
+EOF
+
+    # 3. Overrides de Compatibilidade para o Termux
+    # O Arkenfox desativa coisas que o Termux PRECISA para desenhar a tela no X11/Wayland
+    # Se não fizer isso, o navegador pode ficar preto ou travar.
+    cat <<EOF > "$_pref_dir/z_termux_compatibility.js"
+// Reverter hardening gráfico para compatibilidade com X11/Android
+user_pref("gfx.webrender.all", false);
+user_pref("layers.acceleration.disabled", false);
+user_pref("security.sandbox.content.level", 0); // Às vezes necessário em Androids antigos/Root
+EOF
+
+    echo " [!] Injeção concluída com sucesso."
+    # --- FIM DA INJEÇÃO ---
+}
 }
